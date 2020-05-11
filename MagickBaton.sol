@@ -30,6 +30,7 @@ contract LexDAOMagickBatonSpell01 {
 
     function execute(address payable receiver) public {
         require(msg.sender == executioner);
+        require(msg.sender != receiver);
         leeth.transfer(receiver, leeth.balanceOf(address(this)));
     }
 }
