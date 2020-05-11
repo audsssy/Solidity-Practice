@@ -7,7 +7,7 @@ contract Stamford {
     function saySomething (string memory newStuff) payable public {
         stuff = newStuff;
         stamford.transfer(msg.value);
-    }        
+    }
 
     function newStamford (address payable _stamford) payable public {
         require(msg.sender == stamford);
