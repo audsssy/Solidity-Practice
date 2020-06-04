@@ -19,7 +19,6 @@ contract LexNFTLicense {
     constructor() public {
         owner = 0x4744cda32bE7b3e75b9334001da9ED21789d4c0d;
         allOwners.push(0x4744cda32bE7b3e75b9334001da9ED21789d4c0d);
-        // allWeights.push(100);
     }
 
     // seller makes offer by assigning the buyer
@@ -42,7 +41,8 @@ contract LexNFTLicense {
         for (uint256 i = 0; i < allWeights.length; i++) {
             uint256 eachPayout;
 
-            eachPayout = totalPayout * allWeights[i];
+            uint256 fairShare = totalPayout / allOwners.length;
+            eachPayout = fairShare * allWeights[i];
 
             allOwners[i].transfer(eachPayout);
         }
