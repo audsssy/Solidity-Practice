@@ -952,10 +952,9 @@ contract ERC20Pausable is Pausable, ERC20 {
 /**
  * @dev Implementation of ERC20 standard designed for detailed tokenization with optional lexDAO governance.
  */
-contract LexToken is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20Pausable {
+contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20Pausable {
     // status reference
 
-    string public arweaveHash;
     bool public lexDAOcertified;
     bool public lexDAOgoverned;
 
@@ -963,11 +962,12 @@ contract LexToken is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC2
     address payable[] public allOwners;
     uint256[] public allWeights;
 
-    address payable public owner;
-    address public buyer;
-    uint256 public transactionValue;
-    uint256 public weight;
-    uint256 public totalRoyaltyPayout;
+    address payable public owner;       // owner of LexArt
+    address public buyer;               // buyer of LexArt
+    string public arweaveHash;          // Arweave hash
+    uint256 public transactionValue;    // pricing for LexArt
+    uint256 public weight;              // percentage of royalty retained by owners
+    uint256 public totalRoyaltyPayout;  // total royalties payout for this LexArt
 
     event LexDAOcertified(string indexed details, bool indexed _lexDAOcertified);
     event LexDAOgoverned(string indexed details, bool indexed _lexDAOgoverned);
@@ -978,14 +978,11 @@ contract LexToken is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC2
         string memory name,
         string memory symbol,
         string memory _arweaveHash,
-        uint8 decimals,
-        uint256 cap,
-        uint256 initialSupply,
         address payable _owner,
         address _lexDAO,
         bool _lexDAOgoverned) public
         ERC20(name, symbol)
-        ERC20Capped(cap) {
+        ERC20Capped(1) {
         arweaveHash = _arweaveHash;
         lexDAOgoverned = _lexDAOgoverned;
 
@@ -995,37 +992,52 @@ contract LexToken is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC2
 	_addLexDAO(_lexDAO);
         _addMinter(owner);
         _addPauser(owner);
-        _mint(owner, initialSupply);
-        _setupDecimals(decimals);
+        _mint(owner, 1);
+        _setupDecimals(0);
     }
 
     // seller makes offer by assigning the buyer
     function makeOffer(address _buyer, uint256 _transactionValue, uint256 _weight) public {
         require(msg.sender == owner);
+        require(_buyer != owner, "owner cannot be a buyer");
+        require(_transactionValue != 0, "transaction value cannot be 0");
+
         weight = _weight;
         allWeights.push(weight);
         transactionValue = _transactionValue;
         buyer = _buyer;
     }
 
-    // buyer accepts offer by transacting this function
-   function acceptOffer() public payable {
-        require(msg.sender == buyer);
-        require(msg.value == transactionValue);
+    function distributeRoyalties(
+        uint256 _transactionValue,
+        address payable[] memory _allOwners,
+        uint256[] memory _allWeights) private returns (uint256) {
 
-        uint256 totalPayout = transactionValue / 100;
+        uint256 totalPayout = _transactionValue / 100;
         uint256 royaltyPayout;
 
-        // dripdrop by weight
-        for (uint256 i = 0; i < allWeights.length; i++) {
+        // royalties distribution
+        for (uint256 i = 0; i < _allWeights.length; i++) {
             uint256 eachPayout;
 
             eachPayout = totalPayout * allWeights[i];
             royaltyPayout += eachPayout;
 
-            allOwners[i].transfer(eachPayout);
+            _allOwners[i].transfer(eachPayout);
         }
 
+        return royaltyPayout;
+    }
+
+    // buyer accepts offer by transacting this function
+    function acceptOffer() public payable {
+        require(msg.sender == buyer, "only designated buyer can accept offer");
+        require(msg.value == transactionValue, "payment must match offer price");
+
+        // transaction royalty payout
+        uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
+
+        // all time royalty payout
         totalRoyaltyPayout += royaltyPayout;
 
         // owner receives transactionValue less royaltyPayout
@@ -1067,94 +1079,5 @@ contract LexToken is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC2
     function lexDAOtransfer(string memory details, address from, address to, uint256 amount) public onlyLexDAO onlyLexDAOgoverned {
         _transfer(from, to, amount); // lexDAO governance transfers token balance
         emit LexDAOtransferred(details);
-    }
-}
-
-/**
- * @dev Factory pattern to clone new token contracts with optional lexDAO governance.
- */
-contract LexTokenFactory is Context {
-    // presented by OpenESQ || LexDAO LLC ~ Use at own risk! || chat with us: lexdao.chat
-    string public stamp;
-    uint8 public version = 1;
-    uint256 public factoryFee;
-    address payable public _lexDAO;
-
-    LexToken private LT;
-    address[] public tokens;
-
-    event FactoryFeeUpdated(uint256 indexed _factoryFee);
-    event FactoryStampUpdated(string indexed _stamp);
-    event LexDAOpaid(string indexed details, uint256 indexed payment, address indexed sender);
-    event LexDAOupdated(address indexed lexDAO);
-    event LexTokenDeployed(address indexed LT, address indexed owner, bool indexed _lexDAOgoverned);
-
-    constructor (
-        string memory _stamp,
-        uint256 _factoryFee,
-        address payable lexDAO) public
-    {
-        stamp = _stamp;
-        factoryFee = _factoryFee;
-        _lexDAO = lexDAO;
-    }
-
-    function newLexToken( // public issues stamped LexToken for factory ether (Ξ) fee
-        string memory name,
-	string memory symbol,
-	string memory _stamp,
-	uint8 decimals,
-	uint256 cap,
-	uint256 initialSupply,
-	address payable owner,
-	bool _lexDAOgoverned) payable public {
-	require(msg.value == factoryFee, "factory fee not attached");
-
-        LT = new LexToken(
-            name,
-            symbol,
-            _stamp,
-            decimals,
-            cap,
-            initialSupply,
-            owner,
-            _lexDAO,
-            _lexDAOgoverned);
-
-        tokens.push(address(LT));
-        address(_lexDAO).transfer(msg.value);
-        emit LexTokenDeployed(address(LT), owner, _lexDAOgoverned);
-    }
-
-    function payLexDAO(string memory details) payable public { // public attaches ether (Ξ) with details to lexDAO
-        _lexDAO.transfer(msg.value);
-        emit LexDAOpaid(details, msg.value, _msgSender());
-    }
-
-    function getLexTokenCount() public view returns (uint256 LexTokenCount) {
-        return tokens.length;
-    }
-
-    /***************
-    LEXDAO FUNCTIONS
-    ***************/
-    modifier onlyLexDAO () {
-        require(_msgSender() == _lexDAO, "caller not lexDAO");
-        _;
-    }
-
-    function updateFactoryFee(uint256 _factoryFee) public onlyLexDAO {
-        factoryFee = _factoryFee;
-        emit FactoryFeeUpdated(_factoryFee);
-    }
-
-    function updateFactoryStamp(string memory _stamp) public onlyLexDAO {
-        stamp = _stamp;
-        emit FactoryStampUpdated(_stamp);
-    }
-
-    function updateLexDAO(address payable lexDAO) public onlyLexDAO {
-        _lexDAO = lexDAO;
-        emit LexDAOupdated(lexDAO);
     }
 }
