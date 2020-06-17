@@ -1010,12 +1010,6 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         require(_buyer != owner, "owner cannot be a buyer");
         require(_transactionValue != 0, "transaction value cannot be 0");
 
-        if (weight != 0) {
-            decayWeight();
-        }
-
-        // weight = _weight;
-        allWeights.push(weight);
         transactionValue = _transactionValue;
         buyer = _buyer;
     }
@@ -1046,6 +1040,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         require(msg.sender == buyer, "only designated buyer can accept offer");
         require(msg.value == transactionValue, "payment must match offer price");
 
+
         // transaction royalty payout
         uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
 
@@ -1059,6 +1054,11 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         buyer = owner;
         owner = msg.sender;
         allOwners.push(msg.sender);
+
+        if (weight != 0) {
+            decayWeight();
+            allWeights.push(weight);
+        }
     }
 
     function lexDAOgovernance(string memory details, bool _lexDAOgoverned) public onlyPauser {
