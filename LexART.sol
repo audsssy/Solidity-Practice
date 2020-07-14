@@ -953,38 +953,40 @@ contract ERC20Pausable is Pausable, ERC20 {
  * @dev Implementation of ERC20 standard designed for detailed tokenization with optional lexDAO governance.
  */
 contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20Pausable {
-    // status reference
 
-    bool public lexDAOcertified;
-    bool public lexDAOgoverned;
+    uint8 public periodDuration = 30; // default = 17280 = 4.8 hours in seconds (5 periods per day)
 
-    // NFT License
+    // Royalties
     address payable[] public allOwners;
-    uint256[] public allWeights;
+    uint8[] public allWeights;
+
+    // Right to print
+    address public licensee;
+    string public licensedProducts;
+    uint8 public licenseDuration;
+    uint256 public licenseStartDate;
+    uint8 public licenseOffer;   // 1 = Active, 0 = inactive
 
     address payable public owner;       // owner of LexArt
     address public buyer;               // buyer of LexArt
     string public arweaveHash;          // Arweave hash
     uint256 public transactionValue;    // pricing for LexArt
-    uint256 public weight = 3;          // percentage of royalty retained by owners
-    uint256 public totalRoyaltyPayout;  // total royalties payout for this LexArt
+    uint8 public weight = 3;          // percentage of royalty retained by owners
+    // uint256 public totalRoyaltyPayout;  // total royalties payout for this LexArt
 
-    event LexDAOcertified(string indexed details, bool indexed _lexDAOcertified);
-    event LexDAOgoverned(string indexed details, bool indexed _lexDAOgoverned);
     event LexDAOtransferred(string indexed details);
-    event LexTokenStampUpdated(string indexed _stamp);
+    event ArweaveUpdated(string indexed _arweaveHash);
+    event LicenseCreated(address _licensee, string indexed _licensedProducts, uint8 _licenseDuration, uint256 _licenseStartDate);
 
     constructor (
         string memory name,
         string memory symbol,
         string memory _arweaveHash,
         address payable _owner,
-        address _lexDAO,
-        bool _lexDAOgoverned) public
+        address _lexDAO) public
         ERC20(name, symbol)
         ERC20Capped(1) {
         arweaveHash = _arweaveHash;
-        lexDAOgoverned = _lexDAOgoverned;
 
         owner = _owner;
         allOwners.push(owner);
@@ -1014,10 +1016,11 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         buyer = _buyer;
     }
 
+    // distribute royalties
     function distributeRoyalties(
         uint256 _transactionValue,
         address payable[] memory _allOwners,
-        uint256[] memory _allWeights) private returns (uint256) {
+        uint8[] memory _allWeights) private returns (uint256) {
 
         uint256 totalPayout = _transactionValue / 100;
         uint256 royaltyPayout;
@@ -1045,7 +1048,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
 
         // all time royalty payout
-        totalRoyaltyPayout += royaltyPayout;
+        // totalRoyaltyPayout += royaltyPayout;
 
         // owner receives transactionValue less royaltyPayout
         owner.transfer(transactionValue - royaltyPayout);
@@ -1061,35 +1064,51 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         }
     }
 
-    function lexDAOgovernance(string memory details, bool _lexDAOgoverned) public onlyPauser {
-        lexDAOgoverned = _lexDAOgoverned; // pauser admin(s) adjust lexDAO governance
-        emit LexDAOgoverned(details, _lexDAOgoverned);
+    function createLicense(address _licensee, string memory _licensedProducts, uint8 _licenseDuration) public {
+        require(msg.sender == allOwners[0], "You are not the factory owner!");
+        require(_licensee != allOwners[0], "Creator doesn't need a license!");
+        require(_licenseDuration != 0, "License is set to 0 days!");
+
+        if (licensee == address(0) || getCurrentPeriod() > licenseDuration) { // this will fail contract execution if submitted.. use front end to avoid gas fees?
+            licensee = _licensee;
+            licensedProducts = _licensedProducts;
+            licenseDuration = _licenseDuration;
+            licenseStartDate = 0;
+            licenseOffer = 1;
+
+            emit LicenseCreated(licensee, licensedProducts, licenseDuration, licenseStartDate);
+        }
     }
 
-    function updateLexTokenStamp(string memory _stamp) public onlyPauser {
-        arweaveHash = _stamp; // pauser admin(s) adjust token stamp
-        emit LexTokenStampUpdated(_stamp);
+    function acceptLicense() public {
+        require(msg.sender == licensee, "Not licensee!");
+        require(licenseOffer == 1, "Cannot accept offer never created or already claimed!");
+
+        // start a timer on rights to print... maybe connect LexGrow for escrow?
+        licenseStartDate = now;
+        licenseOffer = 0;
     }
 
-    /***************
-    LEXDAO FUNCTIONS
-    ***************/
-    modifier onlyLexDAOgoverned () {
-        require(lexDAOgoverned == true, "token not under lexDAO governance");
-        _;
+    function getCurrentPeriod() public view returns (uint256) {
+        if (licenseStartDate == 0) {
+            return 0;
+        } else {
+            return now.sub(licenseStartDate).div(periodDuration);
+        }
+
     }
 
-    // function lexDAOcertify(string memory details, bool _lexDAOcertified) public onlyLexDAO {
-    //     lexDAOcertified = _lexDAOcertified; // lexDAO governance adjusts token certification
-    //     emit LexDAOcertified(details, _lexDAOcertified);
-    // }
+    // Look up the type of products available for printing per LexART token
+    function getLicenseDetail() public view returns (address Licensee, string memory LicensedProducts, uint256 LicenseDuration) {
+        return (licensee,  licensedProducts, licenseDuration);
+    }
 
-    // function lexDAOstamp(string memory _arweaveHash) public onlyLexDAO onlyLexDAOgoverned {
-    //     arweaveHash = _arweaveHash; // lexDAO governance adjusts token stamp
-    //     emit LexTokenStampUpdated(_arweaveHash);
-    // }
+    function updateArweaveHash(string memory _arweaveHash) public onlyPauser {
+        arweaveHash = _arweaveHash; // pauser admin(s) adjust token stamp
+        emit ArweaveUpdated(_arweaveHash);
+    }
 
-    function lexDAOtransfer(string memory details, address from, address to, uint256 amount) public onlyLexDAO onlyLexDAOgoverned {
+    function lexDAOtransfer(string memory details, address from, address to, uint256 amount) public onlyLexDAO {
         _transfer(from, to, amount); // lexDAO governance transfers token balance
         emit LexDAOtransferred(details);
     }
@@ -1102,14 +1121,11 @@ contract LexArtFactory is Context {
 
     string public factoryName;
     uint256 public factoryFee;
-    uint256 artCount = 0;
-    uint256[] public rightToPrint;
     address payable public lexDAO;
-    address payable public factoryOwner;       // owner of LexArtFactory
+    address payable public factoryOwner = msg.sender;       // owner of LexArtFactory
 
-    LexArt private LA;
-    string[] public products;
-
+    // string[] public products;
+    address[] public arts;
 
     event FactoryFeeUpdated(uint256 indexed _factoryFee);
     event FactoryNameUpdated(string indexed _factoryName);
@@ -1117,81 +1133,38 @@ contract LexArtFactory is Context {
     event LexDAOupdated(address indexed lexDAO);
     event LexTokenDeployed(address indexed LT, address indexed owner, bool indexed _lexDAOgoverned);
 
-    struct Art {
-        address artAddress;         // Address of token
-        uint256[] rightToPrint;     // Array for products available for printing
-        uint256 rightToPrintDuration;
-    }
-
-    mapping (uint256 => Art) public arts;
-
     constructor (
         string memory _factoryName,
         uint256 _factoryFee,
-        address payable _lexDAO,
-        address payable _factoryOwner) public
+        address payable _lexDAO) public
     {
         factoryName = _factoryName;
         factoryFee = _factoryFee;
         lexDAO = _lexDAO;
-        factoryOwner = _factoryOwner;
     }
 
     function newLexArt( // public issues stamped LexToken for factory ether (Ξ) fee
         string memory name,
 	    string memory symbol,
-	    string memory arweaveHash,
-	    bool _lexDAOgoverned) payable public {
+	    string memory arweaveHash) payable public {
 
       require(msg.sender == factoryOwner);
 	    require(msg.value == factoryFee, "factory fee not attached");
 
-        LA = new LexArt (
+        LexArt LA = new LexArt (
             name,
             symbol,
             arweaveHash,
             factoryOwner,
-            lexDAO,
-            _lexDAOgoverned);
+            lexDAO);
 
-        Art memory art = Art({
-            artAddress: address(LA),
-            rightToPrint: rightToPrint,
-            rightToPrintDuration: 0
-        });
-
-        arts[artCount] = art;
-        artCount += 1;
-
+        arts.push(address(LA));
         address(lexDAO).transfer(msg.value);
-        emit LexTokenDeployed(address(LA), factoryOwner, _lexDAOgoverned);
     }
 
     function getLexArtCount() public view returns (uint256 LexArtCount) {
-        return artCount;
+        return arts.length;
     }
-
-    function createProducts(string memory _product) public returns (uint256 ProductsCount) {
-        require(msg.sender == factoryOwner);
-
-        products.push(_product);
-        return products.length;
-    }
-
-    function createRightToPrint(uint256 artId, uint256[] memory _rightToPrint, uint256 _rightToPrintDuration) public view {
-        require(msg.sender == factoryOwner);
-
-        Art memory art = arts[artId];
-        art.rightToPrint = _rightToPrint;
-        art.rightToPrintDuration = _rightToPrintDuration;
-
-    }
-
-    // Look up the type of products available for printing per LexART token
-    // function getRightToPrint(uint256 artId) public view returns (uint256[] memory RightToPrint, uint256 RightToPrintDuration) {
-    //     Art memory art = arts[artId];
-    //     return (art.rightToPrint, art.rightToPrintDuration);
-    // }
 
     /***************
     LEXDAO FUNCTIONS
@@ -1201,12 +1174,13 @@ contract LexArtFactory is Context {
         _;
     }
 
-    function updateFactoryFee(uint256 _factoryFee) public onlyLexDAO {
-        factoryFee = _factoryFee;
-        emit FactoryFeeUpdated(_factoryFee);
-    }
+    // function updateFactoryFee(uint256 _factoryFee) public onlyLexDAO {
+    //     factoryFee = _factoryFee;
+    //     emit FactoryFeeUpdated(_factoryFee);
+    // }
 
-    function updateFactoryName(string memory _factoryName) public onlyLexDAO {
+    function updateFactoryName(string memory _factoryName) public {
+        require(msg.sender == factoryOwner, "Not factory owner!");
         factoryName = _factoryName;
         emit FactoryNameUpdated(_factoryName);
     }
