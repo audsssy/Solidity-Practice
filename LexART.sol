@@ -954,29 +954,48 @@ contract ERC20Pausable is Pausable, ERC20 {
  */
 contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20Pausable {
 
-    uint8 public periodDuration = 30; // default = 17280 = 4.8 hours in seconds (5 periods per day)
+    uint8 public periodDuration = 30; // uint = seconds in time
+
+    // Art
+    address payable public owner; // owner of LexArt
+    address public buyer; // buyer of LexArt
+    string public arweaveHash; // Arweave hash
+    uint256 public transactionValue; // pricing for LexArt
+    uint8 public ownerOffered; // 1 = offer active, 0 = offer inactive
 
     // Royalties
     address payable[] public allOwners;
     uint8[] public allWeights;
+    uint8 public weight = 3; // percentage of royalty retained by owners
 
-    // Right to print
-    address public licensee;
-    string public licensedProducts;
-    uint8 public licenseDuration;
-    uint256 public licenseStartDate;
-    uint8 public licenseOffer;   // 1 = Active, 0 = inactive
+    // License
+    struct License {
+        // license details set by original owner
+        address licensee;
+        uint256 licenseFee;
+        string licenseDocument;
+        uint8 licensePeriodLength; // Number of periodDurations this license will last
 
-    address payable public owner;       // owner of LexArt
-    address public buyer;               // buyer of LexArt
-    string public arweaveHash;          // Arweave hash
-    uint256 public transactionValue;    // pricing for LexArt
-    uint8 public weight = 3;          // percentage of royalty retained by owners
-    // uint256 public totalRoyaltyPayout;  // total royalties payout for this LexArt
+        // time related license data
+        uint256 licenseStartTime;
+        uint256 licenseEndTime;
+        uint8 licensePeriodLengthReached; // 1 = reached, 0 = not reached
+
+        // license results
+        uint8 licenseOffered; // 1 = offer active, 0 = offer inactive
+        uint8 licenseCompleted; // 1 = license completed, 0 = license incomplete
+        uint8 licenseTerminated; // 1 = license terminated, 0 = license not terminated
+        string licenseReport; // licensee submits license report to complete active license
+        string terminationDetail; // creator submits termination detail to terminate an active license
+    }
+
+    uint8 public licenseCount = 0; // total license created
+
+    mapping(uint256 => License) public licenses;
 
     event LexDAOtransferred(string indexed details);
     event ArweaveUpdated(string indexed _arweaveHash);
-    event LicenseCreated(address _licensee, string indexed _licensedProducts, uint8 _licenseDuration, uint256 _licenseStartDate);
+    event LicenseCreated(address _licensee, string indexed _licenseDocument, uint8 _licenseDuration, uint256 _licenseStartTime);
 
     constructor (
         string memory name,
@@ -1006,7 +1025,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         }
     }
 
-    // seller makes offer by assigning the buyer
+    // owner makes offer by assigning buyer
     function makeOffer(address _buyer, uint256 _transactionValue) public {
         require(msg.sender == owner);
         require(_buyer != owner, "owner cannot be a buyer");
@@ -1014,6 +1033,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
         transactionValue = _transactionValue;
         buyer = _buyer;
+        ownerOffered = 1;
     }
 
     // distribute royalties
@@ -1038,69 +1058,106 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         return royaltyPayout;
     }
 
-    // buyer accepts offer by transacting this function
+    // buyer accepts offer
     function acceptOffer() public payable {
-        require(msg.sender == buyer, "only designated buyer can accept offer");
-        require(msg.value == transactionValue, "payment must match offer price");
+        require(msg.sender == buyer, "You are not the buyer that can accept owner's offer!");
+        require(msg.value == transactionValue, "Payment required incorrect!");
+        require(ownerOffered == 1, "Owner has not made any offer!");
 
+        allWeights.push(weight);
+        decayWeight();
 
         // transaction royalty payout
         uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
-
-        // all time royalty payout
-        // totalRoyaltyPayout += royaltyPayout;
 
         // owner receives transactionValue less royaltyPayout
         owner.transfer(transactionValue - royaltyPayout);
         _transfer(owner, buyer, 1);
 
-        buyer = owner;
         owner = msg.sender;
         allOwners.push(msg.sender);
 
-        if (weight != 0) {
-            decayWeight();
-            allWeights.push(weight);
-        }
+        // Complete owner's offer
+        ownerOffered = 0;
     }
 
-    function createLicense(address _licensee, string memory _licensedProducts, uint8 _licenseDuration) public {
-        require(msg.sender == allOwners[0], "You are not the factory owner!");
+    // creator can create license accepted only by designated licensee
+    function createLicense(address _licensee, uint256 _licenseFee, string memory _licenseDocument, uint8 _licensePeriodLength) public {
+        require(msg.sender == allOwners[0], "You are not the creator!");
         require(_licensee != allOwners[0], "Creator doesn't need a license!");
-        require(_licenseDuration != 0, "License is set to 0 days!");
+        require(_licensee != address(0), "Licensee zeroed!");
+        require(_licensePeriodLength != 0, "License is set to 0 days!");
 
-        if (licensee == address(0) || getCurrentPeriod() > licenseDuration) { // this will fail contract execution if submitted.. use front end to avoid gas fees?
-            licensee = _licensee;
-            licensedProducts = _licensedProducts;
-            licenseDuration = _licenseDuration;
-            licenseStartDate = 0;
-            licenseOffer = 1;
+        License memory license = License({
+            licensee : _licensee,
+            licenseFee : _licenseFee,
+            licenseDocument : _licenseDocument,
+            licensePeriodLength : _licensePeriodLength,
+            licenseStartTime : 0,
+            licenseEndTime : 0,
+            licensePeriodLengthReached : 0,
+            licenseOffered : 1,
+            licenseCompleted : 0,
+            licenseTerminated : 0,
+            licenseReport : "",
+            terminationDetail : ""
+        });
 
-            emit LicenseCreated(licensee, licensedProducts, licenseDuration, licenseStartDate);
-        }
+        licenses[licenseCount] = license;
+        emit LicenseCreated(licenses[licenseCount].licensee, licenses[licenseCount].licenseDocument, licenses[licenseCount].licensePeriodLength, licenses[licenseCount].licenseStartTime);
+
+        licenseCount += 1;
     }
 
-    function acceptLicense() public {
-        require(msg.sender == licensee, "Not licensee!");
-        require(licenseOffer == 1, "Cannot accept offer never created or already claimed!");
+    // designated licensee can accept license
+    function acceptLicense(uint256 _licenseCount) public payable {
+        require(msg.sender == licenses[_licenseCount].licensee, "Not licensee!");
+        require(msg.value == licenses[_licenseCount].licenseFee, "Licensee fee incorrect!");
+        require(licenses[_licenseCount].licenseOffered == 1, "Cannot accept offer never created or already claimed!");
 
-        // start a timer on rights to print... maybe connect LexGrow for escrow?
-        licenseStartDate = now;
-        licenseOffer = 0;
+        // record time of acceptance... maybe connect LexGrow for escrow?
+        licenses[_licenseCount].licenseStartTime = now;
+
+        // license contract formed and so license offer is no longer active
+        licenses[_licenseCount].licenseOffered = 0;
+
+        // licensee pays licensee fee
+        owner.transfer(msg.value);
     }
 
-    function getCurrentPeriod() public view returns (uint256) {
-        if (licenseStartDate == 0) {
-            return 0;
-        } else {
-            return now.sub(licenseStartDate).div(periodDuration);
-        }
+    // licensee can complete active licenses
+    function completeLicense(uint256 _licenseCount, string memory _licenseReport) public payable {
+        require(msg.sender == licenses[_licenseCount].licensee, "Not licensee!");
+        require(msg.value > 0, "Cannot complete a license without paying!"); // is this needed??????????
+        require(licenses[_licenseCount].licenseOffered == 0, "Cannot complete a license that is pending acceptance!");
+        require(licenses[_licenseCount].licenseTerminated == 0, "Cannot complete a license that has been terminated!");
 
+        licenses[_licenseCount].licenseReport = _licenseReport;
+        owner.transfer(msg.value);
+        licenses[_licenseCount].licenseCompleted = 1;
+        licenses[_licenseCount].licenseEndTime = now;
+
+        // Record whether the license has lapsed
+        getCurrentPeriod(_licenseCount) > licenses[_licenseCount].licensePeriodLength ? licenses[_licenseCount].licensePeriodLengthReached = 1 : licenses[_licenseCount].licensePeriodLengthReached = 0;
     }
 
-    // Look up the type of products available for printing per LexART token
-    function getLicenseDetail() public view returns (address Licensee, string memory LicensedProducts, uint256 LicenseDuration) {
-        return (licensee,  licensedProducts, licenseDuration);
+    // creator can terminate active licenses
+    function terminateLicense(uint256 _licenseCount, string memory _terminationDetail) public {
+        require(msg.sender == allOwners[0], "You are not the creator!");
+        require(licenses[_licenseCount].licensee != address(0), "License does not have a licensee!");
+        require(licenses[_licenseCount].licenseOffered == 0, "Cannot terminate a license not accepted by licensee!");
+        require(licenses[_licenseCount].licenseCompleted == 0, "Cannot terminate a license that has been completed!");
+
+        licenses[_licenseCount].terminationDetail = _terminationDetail;
+        licenses[_licenseCount].licenseTerminated = 1;
+        licenses[_licenseCount].licenseEndTime = now;
+
+        // Record whether the license has lapsed
+        getCurrentPeriod(_licenseCount) > licenses[_licenseCount].licensePeriodLength ? licenses[_licenseCount].licensePeriodLengthReached = 1 : licenses[_licenseCount].licensePeriodLengthReached = 0;
+    }
+
+    function getCurrentPeriod(uint256 _licenseCount) public view returns (uint256) {
+        return now.sub(licenses[_licenseCount].licenseStartTime).div(periodDuration);
     }
 
     function updateArweaveHash(string memory _arweaveHash) public onlyPauser {
@@ -1109,7 +1166,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     }
 
     function lexDAOtransfer(string memory details, address from, address to, uint256 amount) public onlyLexDAO {
-        _transfer(from, to, amount); // lexDAO governance transfers token balance
+        _transfer(from, to, amount); // lexDAO0 governance transfers token balance
         emit LexDAOtransferred(details);
     }
 }
