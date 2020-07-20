@@ -962,6 +962,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     string public arweaveHash; // Arweave hash
     uint256 public transactionValue; // pricing for LexArt
     uint8 public ownerOffered; // 1 = offer active, 0 = offer inactive
+    uint256 public totalRoyaltyPayout; // total royalties payout for this LexArt
 
     // Royalties
     address payable[] public allOwners;
@@ -1069,6 +1070,9 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
         // transaction royalty payout
         uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
+
+        // all time royalty payout
+        totalRoyaltyPayout += royaltyPayout;
 
         // owner receives transactionValue less royaltyPayout
         owner.transfer(transactionValue - royaltyPayout);
