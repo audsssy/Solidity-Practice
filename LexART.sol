@@ -942,7 +942,7 @@ contract ERC20Pausable is Pausable, ERC20 {
  */
 contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20Pausable {
 
-    uint256 public periodDuration = 86400; // uint = seconds in time
+    uint256 public periodDuration = 86400; // default = 1 day (or 86400 seconds)
 
     //***** Art *****//
     // address payable public owner; // owner of LexArt
@@ -975,7 +975,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         address licensee;
         uint256 licenseFee;
         string licenseDocument;
-        uint8 licensePeriodLength; // Number of periodDurations this license will last
+        uint8 licensePeriodLength; // Number of periodDuration a license will last
 
         // time related license data
         uint256 licenseStartTime;
@@ -986,8 +986,8 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         uint8 licenseOffered; // 1 = offer active, 0 = offer inactive
         uint8 licenseCompleted; // 1 = license completed, 0 = license incomplete
         uint8 licenseTerminated; // 1 = license terminated, 0 = license not terminated
-        string licenseReport; // licensee submits license report to complete active license
-        string terminationDetail; // creator submits termination detail to terminate an active license
+        string licenseReport; // Licensee submits license report to complete active license
+        string terminationDetail; // Mintor-owner submits termination detail to terminate an active license
     }
 
     uint8 public licenseCount = 0; // total license created
@@ -1029,7 +1029,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
         ownerCount += 1;
         owners[ownerCount].ownerAddress = newOwner;
-        owners[ownerCount].royalties = 0;
+        owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
         owners[ownerCount].gifted = 1;
     }
 
@@ -1056,27 +1056,19 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     // distribute royalties
     function distributeRoyalties(uint256 _transactionValue) private returns (uint256) {
 
-        uint256 totalPayout = _transactionValue / 100;
+        uint256 totalPayout = _transactionValue.div(100);
         uint256 royaltyPayout;
 
         // royalties distribution
         for (uint256 i = 0; i <= ownerCount; i++) {
             uint256 eachPayout;
 
-            // Distribute royalties based on each owner's royalties % and
-            // whether owner received Art by way of gifting
-            if (owners[i].gifted != 1) {
-                eachPayout = totalPayout.mul(owners[i].royalties);
-                royaltyPayout += eachPayout;
+            eachPayout = totalPayout.mul(owners[i].royalties);
+            royaltyPayout += eachPayout;
 
-                owners[i].ownerAddress.transfer(eachPayout);
-                owners[i].royaltiesReceived += eachPayout;
-            } else {
-                // add some logic to continue royalties payout for non-gifted owners
-
-            }
+            owners[i].ownerAddress.transfer(eachPayout);
+            owners[i].royaltiesReceived += eachPayout;
         }
-
         return royaltyPayout;
     }
 
@@ -1086,30 +1078,24 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         require(msg.value == transactionValue, "Incorrect payment amount!");
         require(ownerOffered == 1, "Owner has not made any offer!");
 
-        // transaction royalty payout
+        // Calculate royalty payout
         uint256 royaltyPayout = distributeRoyalties(transactionValue);
 
-        // all time royalty payout
+        // Calculate all time royalty payout
         totalRoyaltyPayout += royaltyPayout;
 
-        // owner receives transactionValue less royaltyPayout
-        if (owners[ownerCount].gifted != 1) {
-            owners[ownerCount].ownerAddress.transfer(transactionValue - royaltyPayout);
-            _transfer(owners[ownerCount].ownerAddress, buyer, 1);
-        } else {
-            _transfer(owners[ownerCount].ownerAddress, buyer, 1);
-        }
+        // Owner receives transactionValue less royaltyPayout
+        owners[ownerCount].ownerAddress.transfer(transactionValue - royaltyPayout);
+        _transfer(owners[ownerCount].ownerAddress, buyer, 1);
 
+        // Add new owner to owners mapping
         ownerCount += 1;
         owners[ownerCount].ownerAddress = msg.sender;
         owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
         owners[ownerCount].gifted = 0;
 
-        // allOwners.push(msg.sender);
-
         // Complete owner's offer
         ownerOffered = 0;
-
     }
 
     // creator can create license accepted only by designated licensee
