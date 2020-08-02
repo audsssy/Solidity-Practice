@@ -944,20 +944,32 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
     uint256 public periodDuration = 86400; // uint = seconds in time
 
-    // Art
-    address payable public owner; // owner of LexArt
+    //***** Art *****//
+    // address payable public owner; // owner of LexArt
     address public buyer; // buyer of LexArt
-    string public arweaveHash; // Arweave hash
+    string public artworkHash; // hash of artwork
     uint256 public transactionValue; // pricing for LexArt
     uint8 public ownerOffered; // 1 = offer active, 0 = offer inactive
     uint256 public totalRoyaltyPayout; // total royalties payout for this LexArt
 
-    // Royalties
-    address payable[] public allOwners;
-    uint8[] public allWeights;
-    uint8 public weight = 10; // percentage of royalty retained by owners
 
-    // License
+    //***** Royalties *****//
+    // address payable[] public allOwners;
+    // uint8[] public allWeights;
+    uint8 public startingRoyalties = 10; // percentage of royalty retained by minter-owner
+
+    struct Owner {
+        address payable ownerAddress;
+        uint8 royalties;
+        uint256 royaltiesReceived;
+        uint8 gifted; // 1 = gifted (gifting owner retains royalties), 0 = not gifted
+    }
+
+    uint8 public ownerCount = 0; // total owners of Art
+    mapping(uint256 => Owner) public owners;
+
+
+    //***** License *****//
     struct License {
         // license details set by original owner
         address licensee;
@@ -979,45 +991,61 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     }
 
     uint8 public licenseCount = 0; // total license created
-
     mapping(uint256 => License) public licenses;
 
+
     event LexDAOtransferred(string indexed details);
-    event ArweaveUpdated(string indexed _arweaveHash);
+    event ArtworkUpdated(string indexed _artworkHash);
     event LicenseCreated(address _licensee, string indexed _licenseDocument, uint8 _licenseDuration, uint256 _licenseStartTime);
 
     constructor (
         string memory name,
         string memory symbol,
-        string memory _arweaveHash,
+        string memory _artworkHash,
         address payable _owner,
         address _lexDAO) public
         ERC20(name, symbol)
         ERC20Capped(1) {
-        arweaveHash = _arweaveHash;
+        artworkHash = _artworkHash;
 
-        owner = _owner;
-        allOwners.push(owner);
+        // owner = _owner;
+        owners[ownerCount].ownerAddress = _owner;
+        owners[ownerCount].royalties = startingRoyalties;
+
+        // allOwners.push(owner);
 
 	    _addLexDAO(_lexDAO);
-        _addMinter(owner);
-        _addPauser(owner);
-        _mint(owner, 1);
+        _addMinter(owners[ownerCount].ownerAddress);
+        _addPauser(owners[ownerCount].ownerAddress);
+        _mint(owners[ownerCount].ownerAddress, 1);
         _setupDecimals(0);
     }
 
-    function decayWeight() private {
-        if (weight <= 10) {
-            if (weight > 0) {
-                weight = weight -1;
+    function giftLexART(address payable newOwner) public payable {
+        require(msg.sender == owners[ownerCount].ownerAddress, "You do not currently own this Art!");
+        require(newOwner != owners[ownerCount].ownerAddress, "Owner cannot gift to herself!");
+
+        _transfer(owners[ownerCount].ownerAddress, newOwner, 1);
+
+        ownerCount += 1;
+        owners[ownerCount].ownerAddress = newOwner;
+        owners[ownerCount].royalties = 0;
+        owners[ownerCount].gifted = 1;
+    }
+
+    function decayRoyalties(uint8 royalties) private view returns (uint8) {
+        if (royalties <= startingRoyalties) {
+            if (royalties > 0) {
+                royalties = royalties - 1;
+                return royalties;
             }
         }
     }
 
     // owner makes offer by assigning buyer
     function makeOffer(address _buyer, uint256 _transactionValue) public {
-        require(msg.sender == owner);
-        require(_buyer != owner, "owner cannot be a buyer");
+        require(msg.sender == owners[ownerCount].ownerAddress);
+        require(_buyer != owners[ownerCount].ownerAddress, "owner cannot be a buyer");
         require(_transactionValue != 0, "transaction value cannot be 0");
 
         transactionValue = _transactionValue;
@@ -1026,22 +1054,27 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     }
 
     // distribute royalties
-    function distributeRoyalties(
-        uint256 _transactionValue,
-        address payable[] memory _allOwners,
-        uint8[] memory _allWeights) private returns (uint256) {
+    function distributeRoyalties(uint256 _transactionValue) private returns (uint256) {
 
         uint256 totalPayout = _transactionValue / 100;
         uint256 royaltyPayout;
 
         // royalties distribution
-        for (uint256 i = 0; i < _allWeights.length; i++) {
+        for (uint256 i = 0; i <= ownerCount; i++) {
             uint256 eachPayout;
 
-            eachPayout = totalPayout * allWeights[i];
-            royaltyPayout += eachPayout;
+            // Distribute royalties based on each owner's royalties % and
+            // whether owner received Art by way of gifting
+            if (owners[i].gifted != 1) {
+                eachPayout = totalPayout.mul(owners[i].royalties);
+                royaltyPayout += eachPayout;
 
-            _allOwners[i].transfer(eachPayout);
+                owners[i].ownerAddress.transfer(eachPayout);
+                owners[i].royaltiesReceived += eachPayout;
+            } else {
+                // add some logic to continue royalties payout for non-gifted owners
+
+            }
         }
 
         return royaltyPayout;
@@ -1049,34 +1082,44 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
     // buyer accepts offer
     function acceptOffer() public payable {
-        require(msg.sender == buyer, "You are not the buyer that can accept owner's offer!");
-        require(msg.value == transactionValue, "Payment required incorrect!");
+        require(msg.sender == buyer, "You are not the buyer to accept owner's offer!");
+        require(msg.value == transactionValue, "Incorrect payment amount!");
         require(ownerOffered == 1, "Owner has not made any offer!");
 
-        allWeights.push(weight);
-        decayWeight();
-
         // transaction royalty payout
-        uint256 royaltyPayout = distributeRoyalties(transactionValue, allOwners, allWeights);
+        uint256 royaltyPayout = distributeRoyalties(transactionValue);
 
         // all time royalty payout
         totalRoyaltyPayout += royaltyPayout;
 
         // owner receives transactionValue less royaltyPayout
-        owner.transfer(transactionValue - royaltyPayout);
-        _transfer(owner, buyer, 1);
+        if (owners[ownerCount].gifted != 1) {
+            owners[ownerCount].ownerAddress.transfer(transactionValue - royaltyPayout);
+            _transfer(owners[ownerCount].ownerAddress, buyer, 1);
+        } else {
+            _transfer(owners[ownerCount].ownerAddress, buyer, 1);
+        }
 
-        owner = msg.sender;
-        allOwners.push(msg.sender);
+        ownerCount += 1;
+        owners[ownerCount].ownerAddress = msg.sender;
+        owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
+        owners[ownerCount].gifted = 0;
+
+        // allOwners.push(msg.sender);
 
         // Complete owner's offer
         ownerOffered = 0;
+
     }
 
     // creator can create license accepted only by designated licensee
-    function createLicense(address _licensee, uint256 _licenseFee, string memory _licenseDocument, uint8 _licensePeriodLength) public {
-        require(msg.sender == allOwners[0], "You are not the creator!");
-        require(_licensee != allOwners[0], "Creator doesn't need a license!");
+    function createLicense(
+        address _licensee,
+        uint256 _licenseFee,
+        string memory _licenseDocument,
+        uint8 _licensePeriodLength) public {
+        require(msg.sender == owners[0].ownerAddress, "You are not the minter-owner!");
+        require(_licensee != owners[0].ownerAddress, "Mintor-owner doesn't need a license!");
         require(_licensee != address(0), "Licensee zeroed!");
         require(_licensePeriodLength != 0, "License is set to 0 days!");
 
@@ -1114,7 +1157,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         licenses[_licenseCount].licenseOffered = 0;
 
         // licensee pays licensee fee
-        owner.transfer(msg.value);
+        owners[0].ownerAddress.transfer(msg.value);
     }
 
     // licensee can complete active licenses
@@ -1125,7 +1168,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
         require(licenses[_licenseCount].licenseTerminated == 0, "Cannot complete a license that has been terminated!");
 
         licenses[_licenseCount].licenseReport = _licenseReport;
-        owner.transfer(msg.value);
+        owners[0].ownerAddress.transfer(msg.value);
         licenses[_licenseCount].licenseCompleted = 1;
         licenses[_licenseCount].licenseEndTime = now;
 
@@ -1135,7 +1178,7 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
     // creator can terminate active licenses
     function terminateLicense(uint256 _licenseCount, string memory _terminationDetail) public {
-        require(msg.sender == allOwners[0], "You are not the creator!");
+        require(msg.sender == owners[0].ownerAddress, "You are not the creator!");
         require(licenses[_licenseCount].licensee != address(0), "License does not have a licensee!");
         require(licenses[_licenseCount].licenseOffered == 0, "Cannot terminate a license not accepted by licensee!");
         require(licenses[_licenseCount].licenseCompleted == 0, "Cannot terminate a license that has been completed!");
@@ -1157,15 +1200,15 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     ***************/
 
     // DAO can vote to effectuate transfer of this token
-    function lexDAOtransfer(string memory details, address from, address to, uint256 amount) public onlyLexDAO {
-        _transfer(from, to, amount); // lexDAO0 governance transfers token balance
+    function lexDAOtransfer(string memory details, address currentOwner, address newOwner) public onlyLexDAO {
+        _transfer(currentOwner, newOwner, 1); // lexDAO0 governance transfers token balance
         emit LexDAOtransferred(details);
     }
 
-    // DAO can vote to update Arweave hash
-    function updateArweaveHash(string memory _arweaveHash) public onlyLexDAO {
-        arweaveHash = _arweaveHash; // pauser admin(s) adjust token stamp
-        emit ArweaveUpdated(_arweaveHash);
+    // DAO can vote to update artwork hash
+    function updateArtworkHash(string memory _artworkHash) public onlyLexDAO {
+        artworkHash = _artworkHash; // pauser admin(s) adjust token stamp
+        emit ArtworkUpdated(_artworkHash);
     }
 }
 
@@ -1175,8 +1218,8 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 contract LexArtFactory is Context {
 
     string public factoryName;
-    uint256 public factoryFee;
-    address payable public lexDAO;
+    uint256 public factoryFee = 5000000000000000; // default - 0.005 Ξ
+    address payable public lexDAO = 0x9455b183F9a6f716F8F46E5C6856A9775e40240d; // WARNING: This is a LexART DAO temp account.
     address payable public factoryOwner; // owner of LexArtFactory
 
     // string[] public products;
@@ -1189,21 +1232,15 @@ contract LexArtFactory is Context {
     event LexDAOupdated(address indexed lexDAO);
     event LexTokenDeployed(address indexed LT, address indexed owner, bool indexed _lexDAOgoverned);
 
-    constructor (
-        string memory _factoryName,
-        uint256 _factoryFee,
-        address payable _lexDAO) public
-    {
+    constructor (string memory _factoryName) public {
         factoryName = _factoryName;
-        factoryFee = _factoryFee;
-        lexDAO = _lexDAO;
-        factoryOwner = _lexDAO;
+        factoryOwner = lexDAO;
     }
 
     function newLexArt(
         string memory name,
 	    string memory symbol,
-	    string memory arweaveHash) payable public {
+	    string memory artworkHash) payable public {
 
       require(msg.sender == factoryOwner);
 	    require(msg.value == factoryFee, "factory fee not attached");
@@ -1211,7 +1248,7 @@ contract LexArtFactory is Context {
         LexArt LA = new LexArt (
             name,
             symbol,
-            arweaveHash,
+            artworkHash,
             factoryOwner,
             lexDAO);
 
