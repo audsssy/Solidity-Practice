@@ -948,25 +948,24 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     // address payable public owner; // owner of LexArt
     address public buyer; // buyer of LexArt
     string public artworkHash; // hash of artwork
-    uint256 public transactionValue; // pricing for LexArt
+    string public certificateHash; // hash of certificate of authenticity
     uint8 public ownerOffered; // 1 = offer active, 0 = offer inactive
+    uint256 public transactionValue; // pricing for LexArt
     uint256 public totalRoyaltyPayout; // total royalties payout for this LexArt
 
 
     //***** Royalties *****//
-    // address payable[] public allOwners;
-    // uint8[] public allWeights;
-    uint8 public startingRoyalties = 10; // percentage of royalty retained by minter-owner
 
     struct Owner {
         address payable ownerAddress;
         uint8 royalties;
         uint256 royaltiesReceived;
-        uint8 gifted; // 1 = gifted (gifting owner retains royalties), 0 = not gifted
+        uint8 gifted; // 1 = gifted (gifted owner retains royalties), 0 = not gifted
     }
 
+    uint8 public startingRoyalties = 10; // percentage of royalty retained by minter-owner
     uint8 public ownerCount = 0; // total owners of Art
-    mapping(uint256 => Owner) public owners;
+    mapping(uint256 => Owner) public owners; // a dictionary of owners
 
 
     //***** License *****//
@@ -991,32 +990,33 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     }
 
     uint8 public licenseCount = 0; // total license created
-    mapping(uint256 => License) public licenses;
+    mapping(uint256 => License) public licenses; // a dictionary of licenses
 
 
+    //***** Events *****//
     event LexDAOtransferred(string indexed details);
     event ArtworkUpdated(string indexed _artworkHash);
+    event CertificateUpdated(string indexed _certificatekHash);
     event LicenseCreated(address _licensee, string indexed _licenseDocument, uint8 _licenseDuration, uint256 _licenseStartTime);
 
     constructor (
         string memory name,
         string memory symbol,
         string memory _artworkHash,
+        string memory _certificateHash,
         address payable _owner,
         address _lexDAO) public
         ERC20(name, symbol)
         ERC20Capped(1) {
         artworkHash = _artworkHash;
+        certificateHash = _certificateHash;
 
-        // owner = _owner;
         owners[ownerCount].ownerAddress = _owner;
         owners[ownerCount].royalties = startingRoyalties;
 
-        // allOwners.push(owner);
-
 	    _addLexDAO(_lexDAO);
         _addMinter(owners[ownerCount].ownerAddress);
-        _addPauser(owners[ownerCount].ownerAddress);
+        _addPauser(_lexDAO);
         _mint(owners[ownerCount].ownerAddress, 1);
         _setupDecimals(0);
     }
@@ -1055,7 +1055,6 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
     // distribute royalties
     function distributeRoyalties(uint256 _transactionValue) private returns (uint256) {
-
         uint256 totalPayout = _transactionValue.div(100);
         uint256 royaltyPayout;
 
@@ -1186,8 +1185,8 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     ***************/
 
     // DAO can vote to effectuate transfer of this token
-    function lexDAOtransfer(string memory details, address currentOwner, address newOwner) public onlyLexDAO {
-        _transfer(currentOwner, newOwner, 1); // lexDAO0 governance transfers token balance
+    function lexDAOburn(string memory details, address currentOwner) public onlyLexDAO {
+        _burn(currentOwner, 1);
         emit LexDAOtransferred(details);
     }
 
@@ -1195,6 +1194,12 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     function updateArtworkHash(string memory _artworkHash) public onlyLexDAO {
         artworkHash = _artworkHash; // pauser admin(s) adjust token stamp
         emit ArtworkUpdated(_artworkHash);
+    }
+
+    // DAO can vote to update certificate hash
+    function updateCertificateHash(string memory _certificateHash) public onlyLexDAO {
+        certificateHash = _certificateHash;
+        emit CertificateUpdated(_certificateHash);
     }
 }
 
@@ -1208,7 +1213,6 @@ contract LexArtFactory is Context {
     address payable public lexDAO = 0x9455b183F9a6f716F8F46E5C6856A9775e40240d; // WARNING: This is a LexART DAO temp account.
     address payable public factoryOwner; // owner of LexArtFactory
 
-    // string[] public products;
     address[] public arts;
 
     event FactoryFeeUpdated(uint256 indexed _factoryFee);
@@ -1225,16 +1229,19 @@ contract LexArtFactory is Context {
 
     function newLexArt(
         string memory name,
-	    string memory symbol,
-	    string memory artworkHash) payable public {
+        string memory symbol,
+        string memory artworkHash,
+        string memory certificateHash
+        ) payable public {
 
-      require(msg.sender == factoryOwner);
-	    require(msg.value == factoryFee, "factory fee not attached");
+        require(msg.sender == factoryOwner, "Only factory owners can mint Art!");
+	    require(msg.value == factoryFee, "Factory Fee not attached!");
 
         LexArt LA = new LexArt (
             name,
             symbol,
             artworkHash,
+            certificateHash,
             factoryOwner,
             lexDAO);
 
