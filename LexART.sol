@@ -1185,6 +1185,12 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
     ***************/
 
     // DAO can vote to effectuate transfer of this token
+    function lexDAOtransfer(string memory details, address currentOwner, address newOwner) public onlyLexDAO {
+        _transfer(currentOwner, newOwner, 1);
+        emit LexDAOtransferred(details);
+    }
+
+    // DAO can vote to burn this token
     function lexDAOburn(string memory details, address currentOwner) public onlyLexDAO {
         _burn(currentOwner, 1);
         emit LexDAOtransferred(details);
