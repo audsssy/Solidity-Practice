@@ -955,7 +955,6 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
 
     //***** Royalties *****//
-
     struct Owner {
         address payable ownerAddress;
         uint8 royalties;
@@ -1044,9 +1043,9 @@ contract LexArt is LexDAORole, ERC20Burnable, ERC20Capped, ERC20Mintable, ERC20P
 
     // owner makes offer by assigning buyer
     function makeOffer(address _buyer, uint256 _transactionValue) public {
-        require(msg.sender == owners[ownerCount].ownerAddress);
-        require(_buyer != owners[ownerCount].ownerAddress, "owner cannot be a buyer");
-        require(_transactionValue != 0, "transaction value cannot be 0");
+        require(msg.sender == owners[ownerCount].ownerAddress, "You are not the owner!");
+        require(_buyer != owners[ownerCount].ownerAddress, "Owner cannot be a buyer!");
+        require(_transactionValue != 0, "Transaction value cannot be 0!");
 
         transactionValue = _transactionValue;
         buyer = _buyer;
