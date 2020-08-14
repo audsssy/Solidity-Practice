@@ -951,11 +951,17 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
         uint8 gifted; // 1 = gifted (gifted owner retains royalties), 0 = not gifted
     }
 
+    struct Buyer {
+        address payable buyerAddress;
+        uint256 transactionValue;
+        uint8 ownerOffered; // 1 = offer active, 0 = offer inactive
+    }
+
     uint8 public startingRoyalties = 10; // percentage of royalty retained by minter-owner
     uint256 public artCount = 0;
-    uint8 public ownerCount = 0; // total owners of Art
-    mapping(uint256 => mapping(uint8 => Owner)) public ownerIndex; // ownerIndex[tokenId][Owner struct]
+    mapping(uint256 => mapping(uint256 => Owner)) public ownerIndex; // ownerIndex[tokenId][Owner struct]
     mapping(uint256 => address payable[]) public ownersPerTokenId; // ownersPerTokenId[tokenId][owner address]
+    mapping(uint256 => Buyer) public buyerPerTokenId; // buyerPerTokenId[tokenId] - one buyer assignment per tokenId
 
 
     mapping (uint256 => string) public artworkMetadataMapping;
@@ -991,31 +997,37 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
 
         address(lexDAO).transfer(msg.value);
 
+        // hash storage
         artworkMetadataMapping[artCount] = artworkMetadata;
         certificateHashMapping[artCount] = certificateHash;
+
+        // owner index
         ownerIndex[artCount][0].royalties = startingRoyalties;
         ownerIndex[artCount][0].ownerAddress = factoryDeployer;
 
         super._safeMint(ownerIndex[artCount][0].ownerAddress, artCount);
+
+        // Add factory deployer to owner array per tokenId
+        ownersPerTokenId[artCount].push(factoryDeployer);
+
         artCount++;
-
     }
 
-    function giftLexART(address payable newOwner) public payable {
-        require(msg.sender == owners[ownerCount].ownerAddress, "You do not currently own this Art!");
-        require(newOwner != owners[ownerCount].ownerAddress, "Owner cannot gift to herself!");
+    // function giftLexART(address payable newOwner) public payable {
+    //     require(msg.sender == owners[ownerCount].ownerAddress, "You do not currently own this Art!");
+    //     require(newOwner != owners[ownerCount].ownerAddress, "Owner cannot gift to herself!");
 
-        _transfer(owners[ownerCount].ownerAddress, newOwner, 1);
+    //     _transfer(owners[ownerCount].ownerAddress, newOwner, 1);
 
-        ownerCount += 1;
-        owners[ownerCount].ownerAddress = newOwner;
-        owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
-        owners[ownerCount].gifted = 1;
-    }
+    //     ownerCount += 1;
+    //     owners[ownerCount].ownerAddress = newOwner;
+    //     owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
+    //     owners[ownerCount].gifted = 1;
+    // }
 
-    function importOwners() private view returns (address[] memory) {
+    // function importOwners() private view returns (address[] memory) {
 
-    }
+    // }
 
     function decayRoyalties(uint8 royalties) private view returns (uint8) {
         if (royalties <= startingRoyalties) {
@@ -1027,58 +1039,59 @@ contract LexARTFactory is ERC721, ERC721Metadata, Ownable {
     }
 
     // owner makes offer by assigning buyer
-    function makeOffer(uint256 tokenId, address _buyer, uint256 _transactionValue) public {
-        require(msg.sender == ownersPerTokenID[tokenId][ownerCount].ownerAddress, "You are not the owner!");
-        require(_buyer != owners[ownerCount].ownerAddress, "Owner cannot be a buyer!");
+    function makeOffer(uint256 tokenId, address payable _buyer, uint256 _transactionValue) public {
+        require(artCount == 0, "Create an artwork first!");
+
+        uint256 currentOwnerPerTokenId = ownersPerTokenId[tokenId].length - 1;
+
+        require(msg.sender == ownersPerTokenId[tokenId][currentOwnerPerTokenId], "You are not the owner!");
+        require(_buyer != ownersPerTokenId[tokenId][currentOwnerPerTokenId], "Owner cannot be a buyer!");
         require(_transactionValue != 0, "Transaction value cannot be 0");
 
-        transactionValue = _transactionValue;
-        buyer = _buyer;
-        ownerOffered = 1;
+        buyerPerTokenId[tokenId].transactionValue = _transactionValue;
+        buyerPerTokenId[tokenId].buyerAddress = _buyer;
+        buyerPerTokenId[tokenId].ownerOffered = 1;
     }
 
     // distribute royalties
-    function distributeRoyalties(uint256 _transactionValue) private returns (uint256) {
+    function distributeRoyalties(uint256 _tokenId, uint256 _transactionValue) private returns (uint256) {
         uint256 totalPayout = _transactionValue.div(100);
         uint256 royaltyPayout;
 
         // royalties distribution
-        for (uint256 i = 0; i <= ownerCount; i++) {
+        for (uint256 i = 0; i <= ownersPerTokenId[_tokenId].length.sub(1); i++) {
             uint256 eachPayout;
 
-            eachPayout = totalPayout.mul(owners[i].royalties);
+            eachPayout = totalPayout.mul(ownerIndex[_tokenId][i].royalties);
             royaltyPayout += eachPayout;
 
-            owners[i].ownerAddress.transfer(eachPayout);
-            owners[i].royaltiesReceived += eachPayout;
+            ownerIndex[_tokenId][i].ownerAddress.transfer(eachPayout);
+            ownerIndex[_tokenId][i].royaltiesReceived += eachPayout;
         }
         return royaltyPayout;
     }
 
     // buyer accepts offer
-    function acceptOffer() public payable {
-        require(msg.sender == buyer, "You are not the buyer to accept owner's offer!");
-        require(msg.value == transactionValue, "Incorrect payment amount!");
-        require(ownerOffered == 1, "Owner has not made any offer!");
+    function acceptOffer(uint256 tokenId) public payable {
+        require(msg.sender == buyerPerTokenId[tokenId].buyerAddress, "You are not the buyer to accept owner's offer!");
+        require(msg.value == buyerPerTokenId[tokenId].transactionValue, "Incorrect payment amount!");
+        require(buyerPerTokenId[tokenId].ownerOffered == 1, "Owner has not made any offer!");
 
         // Calculate royalty payout
-        uint256 royaltyPayout = distributeRoyalties(transactionValue);
-
-        // Calculate all time royalty payout
-        totalRoyaltyPayout += royaltyPayout;
+        uint256 royaltyPayout = distributeRoyalties(tokenId, buyerPerTokenId[tokenId].transactionValue);
 
         // Owner receives transactionValue less royaltyPayout
-        owners[ownerCount].ownerAddress.transfer(transactionValue - royaltyPayout);
-        _transfer(owners[ownerCount].ownerAddress, buyer, 1);
+        ownersPerTokenId[tokenId][ownersPerTokenId[tokenId].length - 1].transfer(buyerPerTokenId[tokenId].transactionValue - royaltyPayout);
+        _transferFrom(ownersPerTokenId[tokenId][ownersPerTokenId[tokenId].length - 1], buyerPerTokenId[tokenId].buyerAddress, tokenId);
 
         // Add new owner to owners mapping
-        ownerCount += 1;
-        owners[ownerCount].ownerAddress = msg.sender;
-        owners[ownerCount].royalties = decayRoyalties(owners[ownerCount - 1].royalties);
-        owners[ownerCount].gifted = 0;
+        ownersPerTokenId[tokenId].push(buyerPerTokenId[tokenId].buyerAddress); // Increments owner array for selected tokenId
+        ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].ownerAddress = msg.sender;
+        ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].royalties = decayRoyalties(ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 2].royalties);
+        ownerIndex[tokenId][ownersPerTokenId[tokenId].length - 1].gifted = 0;
 
         // Complete owner's offer
-        ownerOffered = 0;
+        buyerPerTokenId[tokenId].ownerOffered = 0;
     }
 
     function tokenURI(uint256 tokenID) external view returns (string memory) {
