@@ -36,7 +36,7 @@ contract Shoutout {
         members[newMember].isMember = true;
     } 
     
-    function giveShoutout(uint256[] calldata scores, address[] calldata recipients) public {
+    function giveShoutout(uint[] calldata scores, address[] calldata recipients) public {
         require(members[msg.sender].isMember, "Not a member!");
         require(recipients.length > 0, "Must include a recipieint!");
         require(recipients.length == scores.length, "Recipient & scores mismatch!");
@@ -46,8 +46,10 @@ contract Shoutout {
         for (uint256 i = 0; i < recipients.length; i++) {
             sum += scores[i];
             require(sum < maxScore, "Total scores given is greater than max!");
+            require(members[recipients[i]].isMember, "Recipient not a member!");
             members[recipients[i]].score += scores[i];
-            members[msg.sender].score -= scores[i];    
+            members[msg.sender].score -= scores[i];
+            require(members[msg.sender].score >= 0, 'Not enough shoutouts to give!');
         }
     }
     
